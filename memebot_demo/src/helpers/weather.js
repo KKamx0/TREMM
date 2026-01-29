@@ -16,15 +16,69 @@ async function fetchJson(url) {
   return res.json();
 }
 
-function fmtTempF(n) {
-  return `${Math.round(n)}°F`;
+/** Normalize commas/spaces so "Seattle,WA" and "Seattle,  WA" behave. */
+function normalizePlace(input) {
+  return input
+    .trim()
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/\s+/g, " ");
+}
+
+/** If it looks like "City, ST" (two-letter state), try appending ", US". */
+function maybeAppendUS(q) {
+  const parts = q.split(",").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 2 && /^[A-Za-z]{2}$/.test(parts[1])) {
+    return `${parts[0]}, ${parts[1].toUpperCase()}, US`;
+  }
+  return q;
+}
+
+/** Dedupe exact duplicates OpenWeather sometimes returns (same lat/lon). */
+function dedupeGeo(results) {
+  return results.filter(
+    (g, i, arr) => i === arr.findIndex((x) => x.lat === g.lat && x.lon === g.lon)
+  );
+}
+
+/** Try to pick the best match when user already included specificity (state/country). */
+function pickBestGeoMatch(query, geoResults) {
+  const q = query.toLowerCase();
+
+  // Pull possible state/country tokens from the user's query
+  const parts = query.split(",").map((p) => p.trim()).filter(Boolean);
+  const maybeState = parts.length >= 2 ? parts[1].toLowerCase() : "";
+  const maybeCountry = parts.length >= 3 ? parts[2].toLowerCase() : "";
+
+  // Prefer: exact state match if state was provided
+  if (maybeState) {
+    const stateHit = geoResults.find(
+      (g) => (g.state ?? "").toLowerCase() === maybeState
+    );
+    if (stateHit) return stateHit;
+  }
+
+  // Prefer: exact country code match if country was provided (US/FR/etc)
+  if (maybeCountry && maybeCountry.length <= 3) {
+    const countryHit = geoResults.find(
+      (g) => (g.country ?? "").toLowerCase() === maybeCountry
+    );
+    if (countryHit) return countryHit;
+  }
+
+  // Prefer: query includes a full state name like "Texas" / "Washington"
+  const stateNameHit = geoResults.find((g) => {
+    const state = (g.state ?? "").toLowerCase();
+    return state && q.includes(state);
+  });
+  if (stateNameHit) return stateNameHit;
+
+  // Fallback: first result is usually the most relevant
+  return geoResults[0];
 }
 
 function dayKeyFromUtcWithOffset(dtSeconds, tzOffsetSeconds) {
-  // Use the city's local day by applying tz offset first
   const localMs = (dtSeconds + tzOffsetSeconds) * 1000;
   const d = new Date(localMs);
-  // YYYY-MM-DD key using UTC fields since we've already applied offset
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getUTCDate()).padStart(2, "0");
@@ -32,15 +86,12 @@ function dayKeyFromUtcWithOffset(dtSeconds, tzOffsetSeconds) {
 }
 
 function labelFromKey(key) {
-  // key is YYYY-MM-DD
   const [y, m, d] = key.split("-").map(Number);
-  // Create date in local-ish form for display (use UTC to avoid timezone weirdness)
   const date = new Date(Date.UTC(y, m - 1, d));
   return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
 function summarizeForecast(list, tzOffsetSeconds, days = 3) {
-  // list is 3-hour forecast entries for next 5 days
   const byDay = new Map();
 
   for (const item of list) {
@@ -55,7 +106,7 @@ function summarizeForecast(list, tzOffsetSeconds, days = 3) {
         min,
         max,
         descCounts: new Map(),
-        popMax: 0, // precipitation probability 0..1 (forecast endpoint provides pop)
+        popMax: 0,
       });
     }
 
@@ -70,17 +121,14 @@ function summarizeForecast(list, tzOffsetSeconds, days = 3) {
     agg.popMax = Math.max(agg.popMax, pop);
   }
 
-  // Choose next N days (skip "today" to keep it simple)
   const nowKey = dayKeyFromUtcWithOffset(Math.floor(Date.now() / 1000), tzOffsetSeconds);
-
   const keys = [...byDay.keys()].sort();
-  const futureKeys = keys.filter(k => k !== nowKey);
+  const futureKeys = keys.filter((k) => k !== nowKey);
   const chosen = (futureKeys.length ? futureKeys : keys).slice(0, days);
 
-  return chosen.map(k => {
+  return chosen.map((k) => {
     const agg = byDay.get(k);
 
-    // most common description
     let topDesc = "mixed conditions";
     let topCount = 0;
     for (const [desc, count] of agg.descCounts.entries()) {
@@ -103,42 +151,70 @@ function summarizeForecast(list, tzOffsetSeconds, days = 3) {
 export async function getWeather(place) {
   assertApiKey();
 
-  // 1) Geocode the place to lat/lon (limit 3 so we can detect ambiguity)
-  const geoUrl =
-    `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(place)}` +
-    `&limit=3&appid=${encodeURIComponent(API_KEY)}`;
+  const normalized = normalizePlace(place);
 
-  const geo = await fetchJson(geoUrl);
+  // Try a few candidate queries (helps US city/state a lot)
+  const candidates = [...new Set([
+    normalized,
+    maybeAppendUS(normalized),
+    `${normalized}, US`,
+  ])];
+
+  let geo = null;
+
+  for (const q of candidates) {
+    const geoUrl =
+      `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(q)}` +
+      `&limit=5&appid=${encodeURIComponent(API_KEY)}`;
+
+    const attempt = await fetchJson(geoUrl);
+    if (Array.isArray(attempt) && attempt.length > 0) {
+      geo = dedupeGeo(attempt);
+      break;
+    }
+  }
 
   if (!Array.isArray(geo) || geo.length === 0) {
     return {
       ok: false,
-      message: `Couldn't find **${place}**. Try something like "Seattle, WA" or "Paris, FR".`,
+      message: `Couldn't find **${place}**. Try "Seattle, WA, US" or "Paris, FR".`,
     };
   }
 
+  // If multiple matches:
+  // - If user was specific (has commas / mentions country/state), auto-pick best match.
+  // - Otherwise show options.
   if (geo.length > 1) {
-    const options = geo
-      .map((g, i) => `**${i + 1}.** ${g.name}${g.state ? `, ${g.state}` : ""}, ${g.country}`)
-      .join("\n");
+    const seemsSpecific =
+      normalized.includes(",") ||
+      /united states|usa|\bus\b/i.test(normalized);
 
-    return {
-      ok: false,
-      message: `I found multiple matches for **${place}**:\n${options}\n\nTry being more specific (add state/country).`,
-    };
+    if (seemsSpecific) {
+      geo = [pickBestGeoMatch(normalized, geo)];
+    } else {
+      const options = geo
+        .slice(0, 3)
+        .map((g, i) => `**${i + 1}.** ${g.name}${g.state ? `, ${g.state}` : ""}, ${g.country}`)
+        .join("\n");
+
+      return {
+        ok: false,
+        message:
+          `I found multiple matches for **${place}**:\n${options}\n\n` +
+          `Try adding state/country (ex: "Houston, TX, US" or "Paris, FR").`,
+      };
+    }
   }
 
   const loc = geo[0];
   const locName = `${loc.name}${loc.state ? `, ${loc.state}` : ""}, ${loc.country}`;
 
-  // 2) Current weather
   const currentUrl =
     `https://api.openweathermap.org/data/2.5/weather?lat=${loc.lat}&lon=${loc.lon}` +
     `&units=imperial&appid=${encodeURIComponent(API_KEY)}`;
 
   const cur = await fetchJson(currentUrl);
 
-  // 3) Forecast (5 days, 3-hour steps)
   const forecastUrl =
     `https://api.openweathermap.org/data/2.5/forecast?lat=${loc.lat}&lon=${loc.lon}` +
     `&units=imperial&appid=${encodeURIComponent(API_KEY)}`;
