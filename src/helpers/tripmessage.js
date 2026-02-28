@@ -52,14 +52,21 @@ function formatRestaurants(result) {
 
 function formatHotels(result) {
   if (!result?.ok) return result?.message ?? "Hotels unavailable.";
-  const list = (result.hotels ?? []).slice(0, 6);
+  const list = (result.hotels ?? []).slice(0, 5);
   if (!list.length) return "No hotels found.";
+  
   return list
-    .map((h, i) => {
+    .map((h) => {
       const stars = h.stars > 0 ? "⭐".repeat(h.stars) : "N/A";
-      const price = h.price != null ? `${h.price} ${h.currency ?? ""}`.trim() : "N/A";
-      const link = `https://www.google.com/search?q=${encodeURIComponent(h.name + " " + h.city + " hotel")}`;
-      return `${i + 1}. **${h.name}** (${stars})\nPrice: **${price}**\n${link}`;
+      // Fallback to "USD" if currency is somehow missing
+      const currency = h.currency ?? "USD"; 
+      const link = `https://www.google.com/search?q=${encodeURIComponent(h.name + " " + (h.city || "") + " hotel")}`;
+      
+      return `**${h.name}**\n` +
+             `> **Rating:** ${stars}\n` +
+             `> **Price Per Night:** $${h.price} ${currency}\n` +
+             `> **Total Price:** $${h.totalPrice} ${currency}\n` +
+             `> [View Details](<${link}>)`;
     })
     .join("\n\n");
 }

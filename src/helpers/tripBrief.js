@@ -4,7 +4,7 @@ import { resolveIataCityCode, resolveIataAirportCode } from "./iata.js";
 
 // ESM helpers (based on your commands):
 import { getTopRestaurants } from "./restaurants.js";
-import { getHotelOptions } from "./hotels.js";
+import { getNewHotelOptions } from "./newhotels.js";
 import { geocodePlace } from "./geocode.js";
 import { getActivitiesByLatLon } from "./amadeus.js";
 
@@ -85,7 +85,7 @@ export async function getTripBrief({
       };
     }
 
-    return getHotelOptions({
+    return getNewHotelOptions({
       cityCode,
       checkIn: departDate,
       checkOut: returnDate,
