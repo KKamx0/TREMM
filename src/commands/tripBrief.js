@@ -74,7 +74,8 @@ export default {
       const departDate = interaction.options.getString("depart", true);
       const returnDate = interaction.options.getString("return", true);
       const adults = interaction.options.getInteger("adults") ?? 1;
-      const originAirport = interaction.options.getString("origin")?.trim();
+      const originAirport =
+        interaction.options.getString("origin")?.trim()?.toUpperCase();
       const shouldSave = interaction.options.getBoolean("save") ?? false;
 
       const brief = await getTripBrief({
@@ -108,7 +109,7 @@ export default {
             departDate,
             returnDate,
             adults,
-            originAirport,
+            originAirport: brief.resolved?.originAirport ?? originAirport ?? "SEA",
             messages,
             brief,
           });
