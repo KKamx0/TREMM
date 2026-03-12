@@ -178,6 +178,7 @@ Find top restaurants in a location.
 - Restaurant name
 - Category or cuisine
 - Address
+- Distance from the center of the city (in km)
 - Google search link
 
 ### Notes / Limits
@@ -282,26 +283,11 @@ Find rental cars for a given location.
 
 ### Output
 - Rental car options for the specified location
-- Available car details depending on provider response
+- Link to Google Maps Location
 
 ### Notes / Limits
 - Coverage depends on API/provider support
 - Results may vary by location
-
----
-
-## `/hoteldemo`
-Demonstrates hotel API retry behavior in Discord for debugging and demo purposes.
-
-### Usage
-- `/hoteldemo city:<IATA_CITY>`
-
-### Example
-- `/hoteldemo city:NYC`
-
-### Output
-- Retry progress messages
-- Final summary message
 
 ---
 
@@ -384,3 +370,4 @@ syft . -o spdx-json > sbom.spdx.json
 TREMM is designed to make trip planning easier, faster, and more collaborative inside Discord. Instead of switching between multiple travel sites and apps, users can search, compare, save, and manage trip information directly in chat using slash commands.
 
 TREMM 2.1 pushes the project closer to a more complete travel assistant by combining trip discovery, trip storage, hotel tracking, and improved booking workflows into one bot.
+
