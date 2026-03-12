@@ -148,7 +148,7 @@ export default {
         }
 
         await interaction.followUp(payload);
-      }
+      
     }
   },
 };
